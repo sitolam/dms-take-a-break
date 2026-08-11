@@ -26,7 +26,8 @@ PluginComponent {
     property bool suppressFullscreen: pluginData.suppressFullscreen ?? true
     property bool suppressMeetings: pluginData.suppressMeetings ?? true
 
-    readonly property bool isDaemonInstance: pluginRoot.parent !== null
+    // Only the elected instance drives the shared timer state.
+    property bool isActiveInstance: false
 
     property int nextBreakType: 0 // 0 for none, 1 for short, 2 for long
     property int timeToNextBreak: 0 // seconds
@@ -115,7 +116,7 @@ PluginComponent {
     property var _stats: null
     property var _onStatsReady: null
 
-    readonly property var masterInstance: (isDaemonInstance) ? pluginRoot : PluginService.getGlobalVar(pluginId, "instance")
+    readonly property var masterInstance: (isActiveInstance) ? pluginRoot : PluginService.getGlobalVar(pluginId, "instance")
 
     // Control Center Integration
     ccWidgetIcon: "self_improvement"
@@ -199,7 +200,7 @@ PluginComponent {
         id: sessionTimer
         interval: 1000
         repeat: true
-        running: isDaemonInstance && !pluginRoot.isBreakActive && !pluginRoot.isPaused
+        running: isActiveInstance && !pluginRoot.isBreakActive && !pluginRoot.isPaused
         onTriggered: {
             pluginRoot.timeToNextBreak -= 1;
             
@@ -395,17 +396,26 @@ PluginComponent {
     }
 
     onPluginIdChanged: {
-        if (isDaemonInstance && pluginId !== "") {
+        if (isActiveInstance && pluginId !== "") {
             PluginService.setGlobalVar(pluginId, "instance", pluginRoot);
         }
     }
 
     Component.onCompleted: {
-        if (isDaemonInstance) {
-            if (pluginId !== "") {
-                PluginService.setGlobalVar(pluginId, "instance", pluginRoot);
-            }
+        // Elect one owner for the shared timer state.
+        if (pluginId !== "" && !PluginService.getGlobalVar(pluginId, "instance")) {
+            PluginService.setGlobalVar(pluginId, "instance", pluginRoot);
+            pluginRoot.isActiveInstance = true;
+        }
+        if (pluginRoot.isActiveInstance) {
             resetSession();
+        }
+    }
+
+    Component.onDestruction: {
+        if (pluginRoot.isActiveInstance && pluginRoot.pluginId !== "" &&
+            PluginService.getGlobalVar(pluginRoot.pluginId, "instance") === pluginRoot) {
+            PluginService.setGlobalVar(pluginRoot.pluginId, "instance", null);
         }
     }
 

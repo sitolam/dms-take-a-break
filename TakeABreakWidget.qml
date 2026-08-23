@@ -7,6 +7,7 @@ import qs.Common
 import qs.Widgets
 import qs.Modules.Plugins
 import qs.Services
+import "./dms-common"
 
 PluginComponent {
     id: pluginRoot
@@ -124,7 +125,6 @@ PluginComponent {
     ccWidgetSecondaryText: {
         const master = pluginRoot.masterInstance;
         if (!master) return "";
-        if (master.isPaused) return I18n.tr("Paused");
         
         let total = master.isBreakActive ? master.breakTimeRemaining : master.timeToNextBreak;
         let m = Math.floor(total / 60);
@@ -134,11 +134,180 @@ PluginComponent {
         return master.isBreakActive ? I18n.tr("Active: ") + timeStr : timeStr;
     }
     ccWidgetIsActive: masterInstance ? !masterInstance.isPaused : true
-    onCcWidgetToggled: {
+    ccDetailHeight: 360
+
+    function setPaused(paused) {
         const master = pluginRoot.masterInstance;
-        if (master) {
-            master.isPaused = !master.isPaused;
-            pluginService?.savePluginData(pluginId, "isPaused", master.isPaused);
+        if (!master)
+            return;
+        master.isPaused = paused;
+        pluginService?.savePluginData(pluginId, "isPaused", paused);
+    }
+
+    function togglePaused() {
+        const master = pluginRoot.masterInstance;
+        if (master)
+            setPaused(!master.isPaused);
+    }
+
+    onCcWidgetToggled: {
+        pluginRoot.togglePaused();
+    }
+
+    ccDetailContent: Component {
+        Rectangle {
+            id: detailRoot
+            readonly property var master: pluginRoot.masterInstance
+
+            radius: Theme.cornerRadius
+            color: Theme.nestedSurface
+            border.color: Theme.outlineMedium
+            border.width: Theme.layerOutlineWidth
+            implicitHeight: detailColumn.implicitHeight + Theme.spacingM * 2
+
+            Column {
+                id: detailColumn
+                anchors.fill: parent
+                anchors.margins: Theme.spacingM
+                spacing: Theme.spacingS
+
+                Row {
+                    width: parent.width
+                    spacing: Theme.spacingS
+
+                    Column {
+                        width: parent.width - headerControls.width - parent.spacing
+                        spacing: Theme.spacingXS
+
+                        StyledText {
+                            text: I18n.tr("Take a Break")
+                            font.pixelSize: Theme.fontSizeLarge
+                            font.weight: Font.Medium
+                            color: Theme.surfaceText
+                        }
+
+                        StyledText {
+                            text: {
+                                if (!detailRoot.master)
+                                    return "";
+                                if (detailRoot.master.isPaused)
+                                    return I18n.tr("Paused");
+                                if (detailRoot.master.isBreakActive)
+                                    return detailRoot.master.nextBreakType === 1 ? I18n.tr("Short Break Active") : I18n.tr("Long Break Active");
+                                return detailRoot.master.nextBreakType === 1 ? I18n.tr("Next: Short Break") : I18n.tr("Next: Long Break");
+                            }
+                            font.pixelSize: Theme.fontSizeSmall
+                            color: Theme.surfaceVariantText
+                        }
+                    }
+
+                    Row {
+                        id: headerControls
+                        spacing: Theme.spacingXS
+
+                        DankActionButton {
+                            iconName: "settings"
+                            buttonSize: 28
+                            iconSize: 16
+                            iconColor: Theme.surfaceVariantText
+                            tooltipText: I18n.tr("Settings")
+                            tooltipSide: "bottom"
+                            onClicked: PopoutService.openSettingsWithTab("plugins")
+                        }
+
+                        DankActionButton {
+                            iconName: detailRoot.master?.isPaused ? "play_arrow" : "pause"
+                            iconColor: detailRoot.master?.isPaused ? Theme.primary : Theme.surfaceVariantText
+                            buttonSize: 28
+                            iconSize: 16
+                            tooltipText: detailRoot.master?.isPaused ? I18n.tr("Resume") : I18n.tr("Pause")
+                            tooltipSide: "bottom"
+                            onClicked: pluginRoot.togglePaused()
+                        }
+                    }
+                }
+
+                StatusDisplay {
+                    width: parent.width
+                    iconName: detailRoot.master ? (detailRoot.master.isPaused ? "pause_circle" : "timer") : "timer"
+                    title: {
+                        if (!detailRoot.master) return "";
+                        if (detailRoot.master.isPaused) return I18n.tr("Paused");
+                        if (detailRoot.master.isBreakActive)
+                            return detailRoot.master.nextBreakType === 1 ? I18n.tr("Short Break Active") : I18n.tr("Long Break Active");
+                        return detailRoot.master.nextBreakType === 1 ? I18n.tr("Next: Short Break") : I18n.tr("Next: Long Break");
+                    }
+                    subtitle: {
+                        if (!detailRoot.master) return "0:00";
+                        const total = detailRoot.master.isBreakActive ? detailRoot.master.breakTimeRemaining : detailRoot.master.timeToNextBreak;
+                        const minutes = Math.floor(total / 60);
+                        const seconds = total % 60;
+                        return `${minutes}:${seconds < 10 ? "0" : ""}${seconds}`;
+                    }
+                    active: detailRoot.master ? detailRoot.master.isBreakActive : false
+                    progress: {
+                        if (!detailRoot.master || detailRoot.master.isPaused) return -1;
+                        if (detailRoot.master.isBreakActive) {
+                            const duration = detailRoot.master.nextBreakType === 1 ? detailRoot.master.shortBreakDuration : detailRoot.master.longBreakDuration * 60;
+                            return duration > 0 ? detailRoot.master.breakTimeRemaining / duration : -1;
+                        }
+                        const interval = detailRoot.master.shortBreakInterval * 60;
+                        return interval > 0 ? 1 - (detailRoot.master.timeToNextBreak / interval) : -1;
+                    }
+                }
+
+                Row {
+                    width: parent.width
+                    spacing: Theme.spacingS
+
+                    DankButton {
+                        text: detailRoot.master?.isPaused ? I18n.tr("Resume") : I18n.tr("Pause")
+                        iconName: detailRoot.master?.isPaused ? "play_arrow" : "pause"
+                        backgroundColor: Theme.surfaceContainerHigh
+                        textColor: Theme.surfaceText
+                        width: (parent.width - parent.spacing) / 2
+                        buttonHeight: 36
+                        onClicked: pluginRoot.togglePaused()
+                    }
+
+                    DankButton {
+                        text: I18n.tr("Reset Session")
+                        iconName: "refresh"
+                        backgroundColor: Theme.surfaceContainerHigh
+                        textColor: Theme.surfaceText
+                        width: (parent.width - parent.spacing) / 2
+                        buttonHeight: 36
+                        onClicked: if (detailRoot.master) detailRoot.master.resetSession()
+                    }
+                }
+
+                Row {
+                    width: parent.width
+                    spacing: Theme.spacingS
+
+                    DankButton {
+                        text: I18n.tr("Snooze 5m")
+                        iconName: "snooze"
+                        backgroundColor: Theme.surfaceContainerHigh
+                        textColor: Theme.surfaceText
+                        width: (parent.width - parent.spacing) / 2
+                        buttonHeight: 36
+                        enabled: detailRoot.master ? (detailRoot.master.isPreWarning || detailRoot.master.isBreakActive) : false
+                        onClicked: if (detailRoot.master) detailRoot.master.snoozeBreak()
+                    }
+
+                    DankButton {
+                        text: I18n.tr("Skip")
+                        iconName: "skip_next"
+                        backgroundColor: Theme.surfaceContainerHigh
+                        textColor: Theme.surfaceText
+                        width: (parent.width - parent.spacing) / 2
+                        buttonHeight: 36
+                        enabled: detailRoot.master ? (detailRoot.master.isPreWarning || detailRoot.master.isBreakActive) : false
+                        onClicked: if (detailRoot.master) detailRoot.master.skipBreak()
+                    }
+                }
+            }
         }
     }
 
@@ -293,7 +462,6 @@ PluginComponent {
         pluginRoot.completedShortBreaks = 0;
         pluginRoot.nextBreakType = 1; // Start with short break
         pluginRoot.timeToNextBreak = pluginRoot.shortBreakInterval * 60;
-        sessionTimer.restart();
     }
 
     function startBreak() {
@@ -362,7 +530,6 @@ PluginComponent {
             resumeMusicPlayers();
         }
         pluginRoot.timeToNextBreak = 300; // 5 minutes snooze
-        sessionTimer.restart();
     }
 
     // Dynamic component creation for Modals/Windows to keep widget small
@@ -478,7 +645,7 @@ PluginComponent {
                     textColor: Theme.surfaceText
                     width: (parent.width - parent.spacing) / 2
                     buttonHeight: 36
-                    onClicked: pluginRoot.isPaused = !pluginRoot.isPaused
+                    onClicked: pluginRoot.togglePaused()
                 }
 
                 DankButton {
